@@ -2,7 +2,8 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [main] # ganti ke 'master' kalau branch utama kamu master
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -19,28 +20,44 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build project
         run: npm run build
 
-      - name: Deploy to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: "dist/*"
-          target: "/tmp/deploy-temp"
-          strip_components: 1
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Move files to public_html
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USERNAME }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            mv /tmp/deploy-temp/* /home/satelliteorbit/public_html/
+      - name: Deploy to VPS
+        run: |
+          # Create temp directory
+          ssh -i ~/.ssh/id_ed25519 ${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }} "mkdir -p /tmp/deploy-temp"
+
+          # Upload files
+          scp -i ~/.ssh/id_ed25519 -r dist/* ${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }}:/tmp/deploy-temp/
+
+          # Move to public_html
+          ssh -i ~/.ssh/id_ed25519 ${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }} << 'EOF'
+            # Backup old files
+            if [ -d ~/public_html ]; then
+              mv ~/public_html ~/public_html.backup.$(date +%Y%m%d_%H%M%S)
+            fi
+            
+            # Move new files
+            mkdir -p ~/public_html
+            mv /tmp/deploy-temp/* ~/public_html/
             rm -rf /tmp/deploy-temp
-            echo "Deploy completed at $(date)"
+            
+            # Set permissions
+            chmod -R 755 ~/public_html
+            
+            echo "✅ Deploy completed at $(date)"
+          EOF
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519
