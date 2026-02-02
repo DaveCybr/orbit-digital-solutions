@@ -20,7 +20,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build project
         run: npm run build
@@ -34,28 +34,56 @@ jobs:
 
       - name: Deploy to VPS
         run: |
-          # Create temp directory
+          # Upload files to temp directory
           ssh -i ~/.ssh/id_ed25519 ${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }} "mkdir -p /tmp/deploy-temp"
-
-          # Upload files
           scp -i ~/.ssh/id_ed25519 -r dist/* ${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }}:/tmp/deploy-temp/
 
-          # Move to public_html
+          # Deploy with program folder preservation
           ssh -i ~/.ssh/id_ed25519 ${{ secrets.VPS_USERNAME }}@${{ secrets.VPS_HOST }} << 'EOF'
-            # Backup old files
-            if [ -d ~/public_html ]; then
-              mv ~/public_html ~/public_html.backup.$(date +%Y%m%d_%H%M%S)
-            fi
-            
-            # Move new files
-            mkdir -p ~/public_html
-            mv /tmp/deploy-temp/* ~/public_html/
-            rm -rf /tmp/deploy-temp
-            
-            # Set permissions
-            chmod -R 755 ~/public_html
-            
-            echo "✅ Deploy completed at $(date)"
+          # Backup folder program jika ada
+          if [ -d ~/public_html/program ]; then
+            echo "📦 Backing up program folder..."
+            mv ~/public_html/program ~/program_backup_temp
+          fi
+
+          # Backup assets folder jika ada (opsional, sesuaikan kebutuhan)
+          if [ -d ~/public_html/assets ]; then
+            echo "📦 Backing up assets folder..."
+            mv ~/public_html/assets ~/assets_backup_temp
+          fi
+
+          # Hapus semua file dan folder KECUALI yang sudah di-backup
+          echo "🗑️  Removing old files..."
+          find ~/public_html -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
+          # Pindahkan file baru dari temp
+          echo "📤 Moving new files..."
+          mv /tmp/deploy-temp/* ~/public_html/
+
+          # Restore folder program
+          if [ -d ~/program_backup_temp ]; then
+            echo "♻️  Restoring program folder..."
+            mv ~/program_backup_temp ~/public_html/program
+          fi
+
+          # Restore assets folder jika tidak ada di build baru
+          if [ -d ~/assets_backup_temp ] && [ ! -d ~/public_html/assets ]; then
+            echo "♻️  Restoring assets folder..."
+            mv ~/assets_backup_temp ~/public_html/assets
+          else
+            # Hapus backup assets jika sudah ada di build baru
+            rm -rf ~/assets_backup_temp
+          fi
+
+          # Cleanup
+          rm -rf /tmp/deploy-temp
+
+          # Set permissions
+          chmod -R 755 ~/public_html
+
+          echo "✅ Deploy completed successfully at $(date)"
+          echo "📁 Files in public_html:"
+          ls -lah ~/public_html
           EOF
 
       - name: Cleanup
